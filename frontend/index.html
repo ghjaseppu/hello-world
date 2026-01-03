@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lunar Alignment Explorer</title>
+    <link
+      href="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.css"
+      rel="stylesheet"
+    />
+    <script src="https://unpkg.com/maplibre-gl@3.6.1/dist/maplibre-gl.js"></script>
+    <style>
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        color: #1f2937;
+        background: #f8fafc;
+      }
+      header {
+        background: #0f172a;
+        color: white;
+        padding: 1rem 1.5rem;
+      }
+      main {
+        display: grid;
+        grid-template-columns: 360px 1fr;
+        gap: 1rem;
+        padding: 1rem;
+        height: calc(100vh - 70px);
+        box-sizing: border-box;
+      }
+      #form-panel {
+        background: white;
+        border-radius: 8px;
+        padding: 1rem;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        overflow-y: auto;
+      }
+      label {
+        font-weight: 600;
+        display: block;
+        margin-bottom: 0.25rem;
+      }
+      input[type="text"],
+      input[type="number"],
+      input[type="time"],
+      input[type="date"] {
+        width: 100%;
+        padding: 0.4rem;
+        margin-bottom: 0.75rem;
+        border: 1px solid #d1d5db;
+        border-radius: 4px;
+        box-sizing: border-box;
+      }
+      input[type="checkbox"] {
+        margin-right: 0.5rem;
+      }
+      button {
+        padding: 0.6rem 1rem;
+        background: #2563eb;
+        border: none;
+        color: white;
+        font-weight: 700;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.7;
+        cursor: not-allowed;
+      }
+      #map {
+        width: 100%;
+        height: 100%;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+      }
+      .status {
+        margin-top: 0.5rem;
+        font-size: 0.9rem;
+      }
+      .row {
+        display: flex;
+        gap: 0.5rem;
+      }
+      .row > div {
+        flex: 1;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Lunar Alignment Explorer</h1>
+    </header>
+    <main>
+      <section id="form-panel">
+        <p>
+          Cliquez sur la carte pour sélectionner le point O. Ajustez les paramètres puis lancez le calcul.
+        </p>
+        <div class="row">
+          <div>
+            <label for="latitude">Latitude (°)</label>
+            <input type="number" id="latitude" step="0.0001" value="48.8566" />
+          </div>
+          <div>
+            <label for="longitude">Longitude (°)</label>
+            <input type="number" id="longitude" step="0.0001" value="2.3522" />
+          </div>
+        </div>
+        <label for="altitude_m">Altitude du point O (m)</label>
+        <input type="number" id="altitude_m" value="35" />
+
+        <div class="row">
+          <div>
+            <label for="observer_height_m">Hauteur observateur (m)</label>
+            <input type="number" id="observer_height_m" value="1.7" />
+          </div>
+          <div>
+            <label for="target_extra_height_m">Hauteur cible P (m)</label>
+            <input type="number" id="target_extra_height_m" value="0" />
+          </div>
+        </div>
+
+        <label for="date">Date locale</label>
+        <input type="date" id="date" />
+
+        <div class="row">
+          <div>
+            <label for="start_time">Début</label>
+            <input type="time" id="start_time" value="18:00" />
+          </div>
+          <div>
+            <label for="end_time">Fin</label>
+            <input type="time" id="end_time" value="06:00" />
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label for="step_seconds">Pas temporel (s)</label>
+            <input type="number" id="step_seconds" value="900" />
+          </div>
+          <div>
+            <label for="distance_step_m">Pas distance (m)</label>
+            <input type="number" id="distance_step_m" value="500" />
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label for="max_distance_km">Distance max (km)</label>
+            <input type="number" id="max_distance_km" value="100" />
+          </div>
+          <div>
+            <label for="tolerance_deg">Tolérance (°)</label>
+            <input type="number" id="tolerance_deg" value="0.5" step="0.1" />
+          </div>
+        </div>
+
+        <div>
+          <label><input type="checkbox" id="use_dem_los" /> Utiliser le GeoTIFF pour la ligne de vue</label>
+          <label><input type="checkbox" id="require_moon_above_horizon" /> Exiger la Lune au-dessus de l'horizon</label>
+        </div>
+
+        <button id="run" type="button">Calculer</button>
+        <div class="status" id="status">Prêt.</div>
+      </section>
+      <section>
+        <div id="map"></div>
+      </section>
+    </main>
+
+    <script>
+      const map = new maplibregl.Map({
+        container: 'map',
+        style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+        center: [2.3522, 48.8566],
+        zoom: 6,
+      });
+
+      map.addControl(new maplibregl.NavigationControl());
+
+      let marker = new maplibregl.Marker({ color: '#d946ef' })
+        .setLngLat([2.3522, 48.8566])
+        .addTo(map);
+
+      map.on('click', (e) => {
+        const { lng, lat } = e.lngLat;
+        document.getElementById('latitude').value = lat.toFixed(4);
+        document.getElementById('longitude').value = lng.toFixed(4);
+        marker.setLngLat([lng, lat]);
+      });
+
+      map.on('load', () => {
+        map.addSource('trajectory', {
+          type: 'geojson',
+          data: { type: 'FeatureCollection', features: [] },
+        });
+
+        map.addLayer({
+          id: 'trajectory-line',
+          type: 'line',
+          source: 'trajectory',
+          paint: {
+            'line-color': '#2563eb',
+            'line-width': 3,
+          },
+          filter: ['==', ['get', 'description'], 'Candidate trajectory'],
+        });
+
+        map.addLayer({
+          id: 'trajectory-points',
+          type: 'circle',
+          source: 'trajectory',
+          paint: {
+            'circle-radius': 5,
+            'circle-color': '#f97316',
+            'circle-stroke-width': 1,
+            'circle-stroke-color': '#111827',
+          },
+          filter: ['==', ['geometry-type'], 'Point'],
+        });
+
+        map.addLayer({
+          id: 'trajectory-labels',
+          type: 'symbol',
+          source: 'trajectory',
+          layout: {
+            'text-field': ['get', 't_local'],
+            'text-size': 10,
+            'text-offset': [0, 1.2],
+          },
+          paint: {
+            'text-color': '#1f2937',
+          },
+          filter: ['==', ['geometry-type'], 'Point'],
+        });
+      });
+
+      function setStatus(message, isError = false) {
+        const el = document.getElementById('status');
+        el.textContent = message;
+        el.style.color = isError ? '#dc2626' : '#111827';
+      }
+
+      function getFormValues() {
+        const localDate = document.getElementById('date').value;
+        const start = document.getElementById('start_time').value;
+        const end = document.getElementById('end_time').value;
+        const tzOffset = new Date().getTimezoneOffset() * -1; // minutes east of UTC
+
+        return {
+          latitude: parseFloat(document.getElementById('latitude').value),
+          longitude: parseFloat(document.getElementById('longitude').value),
+          altitude_m: parseFloat(document.getElementById('altitude_m').value || '0'),
+          observer_height_m: parseFloat(document.getElementById('observer_height_m').value || '0'),
+          target_extra_height_m: parseFloat(document.getElementById('target_extra_height_m').value || '0'),
+          date: localDate,
+          start_time: start,
+          end_time: end,
+          timezone_offset_minutes: tzOffset,
+          step_seconds: parseInt(document.getElementById('step_seconds').value, 10),
+          max_distance_km: parseFloat(document.getElementById('max_distance_km').value),
+          distance_step_m: parseFloat(document.getElementById('distance_step_m').value),
+          tolerance_deg: parseFloat(document.getElementById('tolerance_deg').value),
+          use_dem_los: document.getElementById('use_dem_los').checked,
+          require_moon_above_horizon: document.getElementById('require_moon_above_horizon').checked,
+        };
+      }
+
+      async function runComputation() {
+        const payload = getFormValues();
+        setStatus('Calcul en cours...');
+        document.getElementById('run').disabled = true;
+
+        try {
+          const response = await fetch('/api/compute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+
+          if (!response.ok) {
+            const data = await response.json();
+            throw new Error(data.detail || 'Erreur de calcul');
+          }
+
+          const featureCollection = await response.json();
+          const source = map.getSource('trajectory');
+          if (source) {
+            source.setData(featureCollection);
+          }
+
+          if (featureCollection.features.length > 0) {
+            const line = featureCollection.features.find((f) => f.geometry.type === 'LineString');
+            const points = featureCollection.features.filter((f) => f.geometry.type === 'Point');
+            const coords = line ? line.geometry.coordinates : points.map((p) => p.geometry.coordinates);
+            const bbox = coords.reduce(
+              (acc, c) => [
+                Math.min(acc[0], c[0]),
+                Math.min(acc[1], c[1]),
+                Math.max(acc[2], c[0]),
+                Math.max(acc[3], c[1]),
+              ],
+              [180, 90, -180, -90]
+            );
+            map.fitBounds([
+              [bbox[0], bbox[1]],
+              [bbox[2], bbox[3]],
+            ], { padding: 40, maxZoom: 12 });
+          }
+          setStatus('Trajectoire calculée.');
+        } catch (err) {
+          console.error(err);
+          setStatus(err.message, true);
+        } finally {
+          document.getElementById('run').disabled = false;
+        }
+      }
+
+      document.getElementById('run').addEventListener('click', runComputation);
+      document.getElementById('date').valueAsDate = new Date();
+    </script>
+  </body>
+</html>
